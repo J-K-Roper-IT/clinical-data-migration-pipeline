@@ -12,9 +12,13 @@ A Python-powered ETL (Extract, Transform, Load) framework designed for migrating
 * Credential isolation via environment variables (`python-dotenv`).
 * Designed with HIPAA-compliant data handling workflows in mind.
 
-* ## 📂 Project Scope & Structure
-This repository contains the core logic and architectural components of the migration suite. 
+## 📂 Repository Structure
+This repository is curated to showcase the core engineering logic of the migration suite. 
 
-*Note: To maintain a clean and focused presentation, auxiliary files such as local logs, temporary build artifacts, and sensitive configuration files (.env) have been excluded. The included files represent the primary engine and transformation logic.*
+* **copy_data.py**: The primary migration engine (PostgreSQL ➡️ SQL Server).
+* **migrate_indexes.py**: Automated translation of B-Tree/Hash indexes.
+* **compare_table_rowcounts.py**: A data-fidelity audit tool for post-migration QA.
+* **dbconfig.py**: Centralized, secure credential management.
+* **final_schema_corrected.sql**: A sample of the high-complexity clinical target schema.
 
-final_schema_corrected.sql: Included to demonstrate the complexity of the target schema, including Audit triggers, HSTORE extensions, and cross-schema foreign key constraints.
+*Note: Auxiliary files (local logs, specific patient-data mapping tables, and the .env file) are excluded to maintain security and project clarity.*
