@@ -1,12 +1,13 @@
-
-import psycopg2
-import pyodbc
-from psycopg2 import sql as psql
 import time
 import os
 import traceback
 from datetime import datetime
+import dbconfig  # Import our safe config
+import psycopg2
+import pyodbc
+from psycopg2 import sql as psql
 
+# Setup logging
 log_dir = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
@@ -14,56 +15,36 @@ log_file = os.path.join(log_dir, f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')
 def log(message):
     print(message)
     with open(log_file, "a", encoding="utf-8") as logf:
-        logf.write(message + "\\n")  # <-- Correctly write to file
+        logf.write(message + "\n")
 
-
-# SQL Server master connection
-master_conn = pyodbc.connect(
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=192.168.175.102;"
-    "DATABASE=master;"
-    "UID=sa;"
-    "PWD=KRAMg05212021!;"
-    "TrustServerCertificate=yes;"
-)
-master_conn.autocommit = True
+# --- STEP 1: DROP/CREATE DATABASE (SQL SERVER) ---
+# Note: Using dbconfig to get master connection parameters
+master_conn_str = dbconfig.SQL_CONN_STR.replace(f"DATABASE={os.getenv('SQL_DB')}", "DATABASE=master")
+master_conn = pyodbc.connect(master_conn_str, autocommit=True)
 master_cur = master_conn.cursor()
 
-# Drop and recreate 'pd' database
-master_cur.execute("IF EXISTS (SELECT name FROM sys.databases WHERE name = 'pd') DROP DATABASE pd")
-log("Dropped existing 'pd' database if it existed.")
+master_cur.execute(f"IF EXISTS (SELECT name FROM sys.databases WHERE name = '{os.getenv('SQL_DB')}') DROP DATABASE [{os.getenv('SQL_DB')}]")
+log(f"Dropped existing database if it existed.")
 time.sleep(2)
-master_cur.execute("CREATE DATABASE pd")
-log("Created new 'pd' database.")
+master_cur.execute(f"CREATE DATABASE [{os.getenv('SQL_DB')}]")
+log(f"Created new database.")
 time.sleep(2)
 master_cur.close()
 master_conn.close()
 
-# PostgreSQL connection
-src = psycopg2.connect(
-    dbname="pd",
-    user="postgres",
-    password="test1234",
-    host="192.168.175.137",
-    port="5432"
-)
+# --- STEP 2: ESTABLISH SANITIZED CONNECTIONS ---
+# PostgreSQL Source
+src = psycopg2.connect(**dbconfig.PG_CONFIG)
 src.autocommit = True
 src_cur = src.cursor()
 
-# SQL Server connection to 'pd'
-dst = pyodbc.connect(
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=192.168.175.102;"
-    "DATABASE=pd;"
-    "UID=sa;"
-    "PWD=KRAMg05212021!;"
-    "TrustServerCertificate=yes;"
-)
+# SQL Server Destination
+dst = pyodbc.connect(dbconfig.SQL_CONN_STR)
 dst.autocommit = True
 dst_cur = dst.cursor()
 dst_cur.fast_executemany = True
 
-# Get all user tables
+# --- STEP 3: MIGRATE DATA ---
 src_cur.execute("""
     SELECT table_schema, table_name
     FROM information_schema.tables
@@ -119,20 +100,12 @@ for schema, table in tables:
     dst_cur.execute(f"CREATE TABLE [{target_schema}].[{table}] ({columns_sql})")
     log(f" ↳ created table {table}")
 
-    # Insert data if present
-    cols_quoted = ", ".join([f'\"{col}\"' for col in col_names])
-    query = psql.SQL("SELECT {fields} FROM {schema}.{table}").format(
-    fields=psql.SQL(", ").join(psql.Identifier(col) for col in col_names),
-    schema=psql.Identifier(schema),
-    table=psql.Identifier(table)
-)
-
-    # Insert data if present
     query = psql.SQL("SELECT {fields} FROM {schema}.{table}").format(
         fields=psql.SQL(", ").join(psql.Identifier(col) for col in col_names),
         schema=psql.Identifier(schema),
         table=psql.Identifier(table)
     )
+    
     try:
         src_cur.execute(query)
         placeholders = ", ".join("?" for _ in col_names)
@@ -151,6 +124,7 @@ for schema, table in tables:
             except Exception as e:
                 log(f" ⚠️  Error inserting batch into {table}: {e}")
                 log(traceback.format_exc())
+        
         if total_inserted == 0:
             log(f" ↳ no data in table {table}")
     except Exception as e:
